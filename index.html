@@ -34,8 +34,10 @@
         .query-area { margin-top: 20px; display: none; background: #e8f4f8; border: 1px solid #bce8f1; padding: 20px; border-radius: 4px; }
         .query-area h3 { margin-top: 0; color: #31708f; border-bottom: 1px solid #bce8f1; padding-bottom: 10px; }
         .record-card { background: #fff; margin-bottom: 10px; padding: 15px; border-radius: 4px; border-left: 5px solid #3498db; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .record-card h4 { margin-top: 0; margin-bottom: 10px; }
         .record-time { font-size: 0.85em; color: #7f8c8d; margin-bottom: 5px; }
         .record-content { margin: 0; padding-left: 20px; }
+        .record-content li { margin-bottom: 4px; }
     </style>
 </head>
 <body>
@@ -89,14 +91,14 @@
                 <label>是否有高血壓病史？</label>
                 <div class="radio-group">
                     <label><input type="radio" name="hypertension" value="yes" required> 是 (Yes)</label>
-                    <label><input type="radio" name="hypertension" value="no"> 否 (No)</label>
+                    <label><input type="radio" name="hypertension" value="no" checked> 否 (No)</label>
                 </div>
             </div>
             <div class="col form-group">
                 <label>目前是否有服用降血壓藥物？</label>
                 <div class="radio-group">
                     <label><input type="radio" name="medication" value="yes" required> 是 (Yes)</label>
-                    <label><input type="radio" name="medication" value="no"> 否 (No)</label>
+                    <label><input type="radio" name="medication" value="no" checked> 否 (No)</label>
                 </div>
             </div>
         </div>
@@ -131,7 +133,6 @@
 
 <script>
     const FHIR_BASE_URL = 'https://hapi.fhir.org/baseR4';
-    // 定義我們系統專屬的 Tag，用於區分資料來源
     const SYSTEM_TAG = { system: "http://my-system.org", code: "fhir-demo-app" }; 
 
     function generateUUID() {
@@ -141,7 +142,19 @@
         });
     }
 
-    // --- 功能一：查詢單一病患的 Observation ---
+    function calculateAge(birthDateString) {
+        if (!birthDateString) return "未知";
+        const today = new Date();
+        const birthDate = new Date(birthDateString);
+        let age = today.getFullYear() - birthDate.getFullYear();
+        const m = today.getMonth() - birthDate.getMonth();
+        if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+            age--;
+        }
+        return age;
+    }
+
+    // --- 功能一：查詢單一病患的完整輪廓 (Patient + Vitals + Condition + Meds) ---
     async function fetchAndDisplayVitals(patientId) {
         const queryArea = document.getElementById('queryArea');
         const queryTitle = document.getElementById('queryTitle');
@@ -149,20 +162,94 @@
         
         queryArea.style.display = 'block';
         queryTitle.textContent = `✅ 單筆查詢成功 (Patient ID: ${patientId})`;
-        queryDataUI.innerHTML = '讀取中...';
+        queryDataUI.innerHTML = '正在拉取病患基本資料、生理數值與病史...';
 
         try {
-            const response = await fetch(`${FHIR_BASE_URL}/Observation?patient=${patientId}&_sort=-date`);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            // 同時發出 4 個請求
+            const [resPatient, resObs, resCond, resMed] = await Promise.all([
+                fetch(`${FHIR_BASE_URL}/Patient/${patientId}`),
+                fetch(`${FHIR_BASE_URL}/Observation?patient=${patientId}&_sort=-date`),
+                fetch(`${FHIR_BASE_URL}/Condition?patient=${patientId}`),
+                fetch(`${FHIR_BASE_URL}/MedicationStatement?patient=${patientId}`)
+            ]);
+
+            if (!resPatient.ok) throw new Error(`無法取得病患資料 (HTTP ${resPatient.status})`);
             
-            const data = await response.json();
-            renderObservations(data.entry);
+            const patientData = await resPatient.json();
+            const obsData = resObs.ok ? await resObs.json() : { entry: [] };
+            const condData = resCond.ok ? await resCond.json() : { entry: [] };
+            const medData = resMed.ok ? await resMed.json() : { entry: [] };
+
+            // 1. Patient
+            const genderMap = { 'male': '男', 'female': '女', 'other': '其他', 'unknown': '未知' };
+            const genderStr = genderMap[patientData.gender] || patientData.gender || '未知';
+            const ageStr = calculateAge(patientData.birthDate);
+            
+            let html = `<div class="record-card" style="border-left-color: #2c3e50; background-color: #f8f9f9;">`;
+            html += `<h4>病患基本資料</h4>`;
+            html += `<ul class="record-content">`;
+            html += `<li><strong>性別:</strong> ${genderStr}</li>`;
+            html += `<li><strong>出生日期:</strong> ${patientData.birthDate || '未提供'} (約 ${ageStr} 歲)</li>`;
+            html += `</ul></div>`;
+
+            // 2. Condition
+            if (condData.entry && condData.entry.length > 0) {
+                html += `<div class="record-card" style="border-left-color: #e74c3c;">`;
+                html += `<h4 style="color: #c0392b;">診斷病史</h4><ul class="record-content">`;
+                condData.entry.forEach(entry => {
+                    const disease = entry.resource.code?.coding?.[0]?.display || '未知疾病';
+                    html += `<li>${disease}</li>`;
+                });
+                html += `</ul></div>`;
+            }
+
+            // 3. MedicationStatement
+            if (medData.entry && medData.entry.length > 0) {
+                html += `<div class="record-card" style="border-left-color: #f39c12;">`;
+                html += `<h4 style="color: #d35400;">用藥紀錄</h4><ul class="record-content">`;
+                medData.entry.forEach(entry => {
+                    const medName = entry.resource.medicationCodeableConcept?.text || '未知藥物';
+                    html += `<li>${medName}</li>`;
+                });
+                html += `</ul></div>`;
+            }
+
+            // 4. Observation
+            html += `<div class="record-card" style="border-left-color: #3498db;">`;
+            html += `<h4 style="color: #2980b9;">生理量測數值</h4>`;
+            if (obsData.entry && obsData.entry.length > 0) {
+                html += `<ul class="record-content">`;
+                obsData.entry.forEach(entry => {
+                    const res = entry.resource;
+                    const title = res.code?.coding?.[0]?.display || '未知項目';
+                    
+                    if (res.valueQuantity) {
+                        html += `<li><strong>${title}:</strong> ${res.valueQuantity.value} ${res.valueQuantity.unit}</li>`;
+                    } else if (res.component) {
+                        html += `<li><strong>${title}:</strong><ul>`;
+                        res.component.forEach(comp => {
+                            const compTitle = comp.code?.coding?.[0]?.display || '未知子項目';
+                            const val = comp.valueQuantity?.value;
+                            const unit = comp.valueQuantity?.unit;
+                            html += `<li>${compTitle}: ${val} ${unit}</li>`;
+                        });
+                        html += `</ul></li>`;
+                    }
+                });
+                html += `</ul>`;
+            } else {
+                html += `<p style="padding-left: 20px; margin: 0;">查無生理數據。</p>`;
+            }
+            html += `</div>`;
+
+            queryDataUI.innerHTML = html;
+
         } catch (error) {
             queryDataUI.innerHTML = `<span class="error">查詢失敗：${error.message}</span>`;
         }
     }
 
-    // --- 功能二：查詢過去 30 分鐘 Observation (可選範圍) ---
+    // --- 功能二：查詢過去 30 分鐘 Observation ---
     document.getElementById('queryRecentBtn').addEventListener('click', async function() {
         const btn = this;
         const scope = document.getElementById('queryScope').value;
@@ -175,28 +262,54 @@
         queryArea.style.display = 'block';
         
         const scopeText = scope === 'my_system' ? '本系統' : '全世界';
-        queryTitle.textContent = `🕒 最近 30 分鐘紀錄 (${scopeText})`;
+        queryTitle.textContent = `🕒 最近 30 分鐘生理數值紀錄 (${scopeText})`;
         queryDataUI.innerHTML = '向伺服器檢索中...';
 
         try {
-            // 計算 30 分鐘前的 ISO 時間字串
             const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-            
-            // 基礎查詢網址：時間 >= 30分鐘前，並依時間倒序
             let targetUrl = `${FHIR_BASE_URL}/Observation?_lastUpdated=ge${thirtyMinsAgo}&_sort=-_lastUpdated`;
             
-            // 若選擇「僅限本系統」，則加入 _tag 過濾參數
             if (scope === 'my_system') {
                 targetUrl += `&_tag=${SYSTEM_TAG.code}`;
             }
             
-            console.log("Request URL:", targetUrl);
-
             const response = await fetch(targetUrl);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             
             const data = await response.json();
-            renderObservations(data.entry, true);
+            
+            if (!data.entry || data.entry.length === 0) {
+                queryDataUI.innerHTML = '<div class="record-card">查無任何生理數據紀錄。</div>';
+                return;
+            }
+
+            let html = '';
+            data.entry.forEach(entry => {
+                const res = entry.resource;
+                const title = res.code?.coding?.[0]?.display || '未知項目';
+                const time = res.meta?.lastUpdated ? new Date(res.meta.lastUpdated).toLocaleString('zh-TW') : '未知時間';
+                const refPatient = res.subject?.reference || '未知病患';
+                
+                html += `<div class="record-card">`;
+                html += `<div class="record-time">上傳時間: ${time} | 歸屬: ${refPatient}</div>`;
+                html += `<ul class="record-content">`;
+                
+                if (res.valueQuantity) {
+                    html += `<li><strong>${title}:</strong> ${res.valueQuantity.value} ${res.valueQuantity.unit}</li>`;
+                } else if (res.component) {
+                    html += `<li><strong>${title}:</strong><ul>`;
+                    res.component.forEach(comp => {
+                        const compTitle = comp.code?.coding?.[0]?.display || '未知子項目';
+                        const val = comp.valueQuantity?.value;
+                        const unit = comp.valueQuantity?.unit;
+                        html += `<li>${compTitle}: ${val} ${unit}</li>`;
+                    });
+                    html += `</ul></li>`;
+                }
+                html += `</ul></div>`;
+            });
+            queryDataUI.innerHTML = html;
+
         } catch (error) {
             queryDataUI.innerHTML = `<span class="error">查詢失敗：${error.message}</span>`;
         } finally {
@@ -204,42 +317,6 @@
             btn.textContent = '執行批次查詢';
         }
     });
-
-    // --- 輔助功能：將 FHIR Observation JSON 渲染成 HTML ---
-    function renderObservations(entries, showPatientId = false) {
-        const queryDataUI = document.getElementById('queryData');
-        if (!entries || entries.length === 0) {
-            queryDataUI.innerHTML = '<div class="record-card">查無任何生理數據紀錄。</div>';
-            return;
-        }
-
-        let html = '';
-        entries.forEach(entry => {
-            const res = entry.resource;
-            const title = res.code?.coding?.[0]?.display || '未知項目';
-            const time = res.meta?.lastUpdated ? new Date(res.meta.lastUpdated).toLocaleString('zh-TW') : '未知時間';
-            const refPatient = res.subject?.reference || '未知病患';
-            
-            html += `<div class="record-card">`;
-            html += `<div class="record-time">上傳時間: ${time} ${showPatientId ? ` | 歸屬: ${refPatient}` : ''}</div>`;
-            html += `<ul class="record-content">`;
-            
-            if (res.valueQuantity) {
-                html += `<li><strong>${title}:</strong> ${res.valueQuantity.value} ${res.valueQuantity.unit}</li>`;
-            } else if (res.component) {
-                html += `<li><strong>${title}:</strong><ul>`;
-                res.component.forEach(comp => {
-                    const compTitle = comp.code?.coding?.[0]?.display || '未知子項目';
-                    const val = comp.valueQuantity?.value;
-                    const unit = comp.valueQuantity?.unit;
-                    html += `<li>${compTitle}: ${val} ${unit}</li>`;
-                });
-                html += `</ul></li>`;
-            }
-            html += `</ul></div>`;
-        });
-        queryDataUI.innerHTML = html;
-    }
 
     // --- 表單提交 (上傳邏輯) ---
     document.getElementById('fhirForm').addEventListener('submit', async function(e) {
@@ -269,9 +346,7 @@
         const birthYear = currentYear - age;
         const currentTime = new Date().toISOString();
 
-        // 寫入自訂 Tag 到 Meta 中
         const commonMeta = { meta: { tag: [SYSTEM_TAG] } };
-
         const entries = [];
 
         // 1. Patient
