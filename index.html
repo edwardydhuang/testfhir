@@ -1,4 +1,247 @@
-// --- 表單提交 (上傳邏輯) ---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FHIR 生理量測與病史上傳暨查詢系統</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #2c3e50; }
+        h2 { color: #34495e; font-size: 1.2rem; border-bottom: 2px solid #ecf0f1; padding-bottom: 5px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; }
+        input[type="number"], select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .radio-group { display: flex; gap: 15px; }
+        .radio-group label { font-weight: normal; display: inline-flex; align-items: center; }
+        .radio-group input { margin-right: 5px; }
+        .row { display: flex; gap: 15px; flex-wrap: wrap; }
+        .col { flex: 1; min-width: 200px; }
+        
+        button { width: 100%; padding: 12px; font-size: 16px; cursor: pointer; border: none; border-radius: 4px; transition: background 0.3s; margin-bottom: 10px; color: white; font-weight: bold; }
+        .btn-primary { background-color: #3498db; }
+        .btn-primary:hover { background-color: #2980b9; }
+        .btn-secondary { background-color: #9b59b6; }
+        .btn-secondary:hover { background-color: #8e44ad; }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+        
+        .status { margin-top: 10px; font-weight: bold; text-align: center; }
+        .success { color: #27ae60; }
+        .error { color: #c0392b; }
+        
+        /* 查詢結果區塊樣式 */
+        .query-options { background: #fdfefe; padding: 15px; border: 1px solid #d0d3d4; border-radius: 4px; margin-bottom: 15px; }
+        .query-area { margin-top: 20px; display: none; background: #e8f4f8; border: 1px solid #bce8f1; padding: 20px; border-radius: 4px; }
+        .query-area h3 { margin-top: 0; color: #31708f; border-bottom: 1px solid #bce8f1; padding-bottom: 10px; }
+        .record-card { background: #fff; margin-bottom: 10px; padding: 15px; border-radius: 4px; border-left: 5px solid #3498db; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .record-time { font-size: 0.85em; color: #7f8c8d; margin-bottom: 5px; }
+        .record-content { margin: 0; padding-left: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>FHIR 醫療數據管理面板</h1>
+    
+    <!-- 區塊一：上傳資料 -->
+    <h2>新增病患與量測紀錄</h2>
+    <form id="fhirForm">
+        <div class="row">
+            <div class="col form-group">
+                <label for="age">年齡 (Age)</label>
+                <input type="number" id="age" required min="1" max="120" placeholder="例如: 45">
+            </div>
+            <div class="col form-group">
+                <label for="gender">性別 (Gender)</label>
+                <select id="gender" required>
+                    <option value="male">男性 (Male)</option>
+                    <option value="female">女性 (Female)</option>
+                    <option value="other">其他 (Other)</option>
+                    <option value="unknown">未知 (Unknown)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col form-group">
+                <label for="height">身高 (cm)</label>
+                <input type="number" id="height" required min="50" max="250" step="0.1" placeholder="例如: 170.5">
+            </div>
+            <div class="col form-group">
+                <label for="weight">體重 (kg)</label>
+                <input type="number" id="weight" required min="2" max="300" step="0.1" placeholder="例如: 65.2">
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col form-group">
+                <label for="systolic">收縮壓 (Systolic BP, mmHg)</label>
+                <input type="number" id="systolic" required min="50" max="250" placeholder="例如: 120">
+            </div>
+            <div class="col form-group">
+                <label for="diastolic">舒張壓 (Diastolic BP, mmHg)</label>
+                <input type="number" id="diastolic" required min="30" max="150" placeholder="例如: 80">
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col form-group">
+                <label>是否有高血壓病史？</label>
+                <div class="radio-group">
+                    <label><input type="radio" name="hypertension" value="yes" required> 是 (Yes)</label>
+                    <label><input type="radio" name="hypertension" value="no"> 否 (No)</label>
+                </div>
+            </div>
+            <div class="col form-group">
+                <label>目前是否有服用降血壓藥物？</label>
+                <div class="radio-group">
+                    <label><input type="radio" name="medication" value="yes" required> 是 (Yes)</label>
+                    <label><input type="radio" name="medication" value="no"> 否 (No)</label>
+                </div>
+            </div>
+        </div>
+
+        <button type="submit" id="submitBtn" class="btn-primary">打包、上傳並查詢本筆資料</button>
+    </form>
+
+    <div id="statusMsg" class="status"></div>
+
+    <hr style="border: 0; border-top: 1px solid #ecf0f1; margin: 30px 0;">
+
+    <!-- 區塊二：批次查詢 -->
+    <h2>歷史查詢 (最近 30 分鐘)</h2>
+    
+    <div class="query-options">
+        <label for="queryScope">查詢範圍：</label>
+        <select id="queryScope">
+            <option value="my_system">僅限本系統上傳的資料</option>
+            <option value="world">全世界資料 (HAPI FHIR 公共伺服器)</option>
+        </select>
+    </div>
+
+    <button type="button" id="queryRecentBtn" class="btn-secondary">執行批次查詢</button>
+    
+    <!-- 查詢結果顯示區 -->
+    <div class="query-area" id="queryArea">
+        <h3 id="queryTitle">查詢結果</h3>
+        <div id="queryData"></div>
+    </div>
+
+</div>
+
+<script>
+    const FHIR_BASE_URL = 'https://hapi.fhir.org/baseR4';
+    // 定義我們系統專屬的 Tag，用於區分資料來源
+    const SYSTEM_TAG = { system: "http://my-system.org", code: "fhir-demo-app" }; 
+
+    function generateUUID() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+
+    // --- 功能一：查詢單一病患的 Observation ---
+    async function fetchAndDisplayVitals(patientId) {
+        const queryArea = document.getElementById('queryArea');
+        const queryTitle = document.getElementById('queryTitle');
+        const queryDataUI = document.getElementById('queryData');
+        
+        queryArea.style.display = 'block';
+        queryTitle.textContent = `✅ 單筆查詢成功 (Patient ID: ${patientId})`;
+        queryDataUI.innerHTML = '讀取中...';
+
+        try {
+            const response = await fetch(`${FHIR_BASE_URL}/Observation?patient=${patientId}&_sort=-date`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            
+            const data = await response.json();
+            renderObservations(data.entry);
+        } catch (error) {
+            queryDataUI.innerHTML = `<span class="error">查詢失敗：${error.message}</span>`;
+        }
+    }
+
+    // --- 功能二：查詢過去 30 分鐘 Observation (可選範圍) ---
+    document.getElementById('queryRecentBtn').addEventListener('click', async function() {
+        const btn = this;
+        const scope = document.getElementById('queryScope').value;
+        const queryArea = document.getElementById('queryArea');
+        const queryTitle = document.getElementById('queryTitle');
+        const queryDataUI = document.getElementById('queryData');
+        
+        btn.disabled = true;
+        btn.textContent = '查詢中...';
+        queryArea.style.display = 'block';
+        
+        const scopeText = scope === 'my_system' ? '本系統' : '全世界';
+        queryTitle.textContent = `🕒 最近 30 分鐘紀錄 (${scopeText})`;
+        queryDataUI.innerHTML = '向伺服器檢索中...';
+
+        try {
+            // 計算 30 分鐘前的 ISO 時間字串
+            const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+            
+            // 基礎查詢網址：時間 >= 30分鐘前，並依時間倒序
+            let targetUrl = `${FHIR_BASE_URL}/Observation?_lastUpdated=ge${thirtyMinsAgo}&_sort=-_lastUpdated`;
+            
+            // 若選擇「僅限本系統」，則加入 _tag 過濾參數
+            if (scope === 'my_system') {
+                targetUrl += `&_tag=${SYSTEM_TAG.code}`;
+            }
+            
+            console.log("Request URL:", targetUrl);
+
+            const response = await fetch(targetUrl);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            
+            const data = await response.json();
+            renderObservations(data.entry, true);
+        } catch (error) {
+            queryDataUI.innerHTML = `<span class="error">查詢失敗：${error.message}</span>`;
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '執行批次查詢';
+        }
+    });
+
+    // --- 輔助功能：將 FHIR Observation JSON 渲染成 HTML ---
+    function renderObservations(entries, showPatientId = false) {
+        const queryDataUI = document.getElementById('queryData');
+        if (!entries || entries.length === 0) {
+            queryDataUI.innerHTML = '<div class="record-card">查無任何生理數據紀錄。</div>';
+            return;
+        }
+
+        let html = '';
+        entries.forEach(entry => {
+            const res = entry.resource;
+            const title = res.code?.coding?.[0]?.display || '未知項目';
+            const time = res.meta?.lastUpdated ? new Date(res.meta.lastUpdated).toLocaleString('zh-TW') : '未知時間';
+            const refPatient = res.subject?.reference || '未知病患';
+            
+            html += `<div class="record-card">`;
+            html += `<div class="record-time">上傳時間: ${time} ${showPatientId ? ` | 歸屬: ${refPatient}` : ''}</div>`;
+            html += `<ul class="record-content">`;
+            
+            if (res.valueQuantity) {
+                html += `<li><strong>${title}:</strong> ${res.valueQuantity.value} ${res.valueQuantity.unit}</li>`;
+            } else if (res.component) {
+                html += `<li><strong>${title}:</strong><ul>`;
+                res.component.forEach(comp => {
+                    const compTitle = comp.code?.coding?.[0]?.display || '未知子項目';
+                    const val = comp.valueQuantity?.value;
+                    const unit = comp.valueQuantity?.unit;
+                    html += `<li>${compTitle}: ${val} ${unit}</li>`;
+                });
+                html += `</ul></li>`;
+            }
+            html += `</ul></div>`;
+        });
+        queryDataUI.innerHTML = html;
+    }
+
+    // --- 表單提交 (上傳邏輯) ---
     document.getElementById('fhirForm').addEventListener('submit', async function(e) {
         e.preventDefault();
         
@@ -33,7 +276,7 @@
 
         // 1. Patient
         entries.push({
-            fullUrl: patientUUID, // Patient 本身的 UUID
+            fullUrl: patientUUID,
             request: { method: "POST", url: "Patient" },
             resource: {
                 resourceType: "Patient",
@@ -51,7 +294,7 @@
             effectiveDateTime: currentTime
         };
 
-        // 2. Height (注意：加上了 fullUrl)
+        // 2. Height
         entries.push({
             fullUrl: "urn:uuid:" + generateUUID(), 
             request: { method: "POST", url: "Observation" },
@@ -63,7 +306,7 @@
             }
         });
 
-        // 3. Weight (注意：加上了 fullUrl)
+        // 3. Weight
         entries.push({
             fullUrl: "urn:uuid:" + generateUUID(),
             request: { method: "POST", url: "Observation" },
@@ -75,7 +318,7 @@
             }
         });
 
-        // 4. Blood Pressure (注意：加上了 fullUrl)
+        // 4. Blood Pressure
         entries.push({
             fullUrl: "urn:uuid:" + generateUUID(),
             request: { method: "POST", url: "Observation" },
@@ -149,13 +392,11 @@
                 
                 await fetchAndDisplayVitals(patientId);
             } else {
-                // --- 增強型錯誤捕捉：解析 FHIR 的 OperationOutcome ---
                 const errorResult = await response.json();
                 console.error("伺服器錯誤回覆:", errorResult);
                 
                 let errorText = `未知伺服器錯誤`;
                 if (errorResult.resourceType === 'OperationOutcome' && errorResult.issue) {
-                    // 抓取伺服器回傳的具體診斷訊息 (Diagnostics)
                     errorText = errorResult.issue.map(i => i.diagnostics || i.code).join(' ; ');
                 }
                 
@@ -170,3 +411,7 @@
             btn.textContent = '打包、上傳並查詢本筆資料';
         }
     });
+</script>
+
+</body>
+</html>
