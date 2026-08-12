@@ -95,6 +95,17 @@
             </div>
         </div>
 
+        <!-- 新增血糖欄位 -->
+        <div class="row">
+            <div class="col form-group">
+                <label for="bloodsugar">血糖 (Blood Sugar, mg/dL)</label>
+                <input type="number" id="bloodsugar" required min="10" max="1000" step="0.1" placeholder="例如: 95">
+            </div>
+            <div class="col form-group">
+                <!-- 留空以維持兩欄排版平衡 -->
+            </div>
+        </div>
+
         <div class="row">
             <div class="col form-group">
                 <label>是否有高血壓病史？</label>
@@ -120,7 +131,7 @@
     <hr style="border: 0; border-top: 1px solid #ecf0f1; margin: 30px 0;">
 
     <!-- 區塊二：批次查詢 -->
-    <h2>歷史查詢 (最近 30 分鐘)</h2>
+    <h2>歷史查詢 (最近 10 分鐘)</h2>
     
     <div class="query-options">
         <label for="queryScope">查詢範圍：</label>
@@ -267,13 +278,14 @@
         btn.disabled = true;
         btn.textContent = '檢索中...';
         queryArea.style.display = 'block';
-        document.getElementById('queryTitle').textContent = `🕒 最近 30 分鐘關聯紀錄 (${scope === 'my_system' ? '本系統' : '全世界'})`;
+        document.getElementById('queryTitle').textContent = `🕒 最近 10 分鐘關聯紀錄 (${scope === 'my_system' ? '本系統' : '全世界'})`;
         queryDataUI.innerHTML = '1/2: 正在向伺服器檢索最新測量紀錄...';
 
         try {
-            const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+            // 改為最近 10 分鐘
+            const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
             // 限定 _count=30 避免拉取全世界資料時 API 超載或網址過長
-            let targetUrl = `${FHIR_BASE_URL}/Observation?_lastUpdated=ge${thirtyMinsAgo}&_sort=-_lastUpdated&_count=30`;
+            let targetUrl = `${FHIR_BASE_URL}/Observation?_lastUpdated=ge${tenMinsAgo}&_sort=-_lastUpdated&_count=30`;
             if (scope === 'my_system') targetUrl += `&_tag=${SYSTEM_TAG.code}`;
             
             const resObs = await fetch(targetUrl);
@@ -348,7 +360,7 @@
         }
     });
 
-    // --- 表單提交 (上傳邏輯 - 與上個版本完全相同) ---
+    // --- 表單提交 (上傳邏輯) ---
     document.getElementById('fhirForm').addEventListener('submit', async function(e) {
         e.preventDefault();
         
@@ -368,6 +380,9 @@
         const weight = parseFloat(document.getElementById('weight').value);
         const systolic = parseFloat(document.getElementById('systolic').value);
         const diastolic = parseFloat(document.getElementById('diastolic').value);
+        // 取得血糖數值
+        const bloodsugar = parseFloat(document.getElementById('bloodsugar').value);
+        
         const hasHypertension = document.querySelector('input[name="hypertension"]:checked').value === 'yes';
         const takingMedication = document.querySelector('input[name="medication"]:checked').value === 'yes';
 
@@ -378,6 +393,7 @@
         const commonMeta = { meta: { tag: [SYSTEM_TAG] } };
         const entries = [];
 
+        // Patient 資源
         entries.push({
             fullUrl: patientUUID,
             request: { method: "POST", url: "Patient" },
@@ -389,6 +405,7 @@
             subject: { reference: patientUUID }, effectiveDateTime: currentTime
         };
 
+        // 身高
         entries.push({
             fullUrl: "urn:uuid:" + generateUUID(), request: { method: "POST", url: "Observation" },
             resource: { ...baseObservation,
@@ -398,6 +415,7 @@
             }
         });
 
+        // 體重
         entries.push({
             fullUrl: "urn:uuid:" + generateUUID(), request: { method: "POST", url: "Observation" },
             resource: { ...baseObservation,
@@ -407,6 +425,7 @@
             }
         });
 
+        // 血壓 (含收縮壓與舒張壓)
         entries.push({
             fullUrl: "urn:uuid:" + generateUUID(), request: { method: "POST", url: "Observation" },
             resource: { ...baseObservation,
@@ -419,6 +438,17 @@
             }
         });
 
+        // 新增：血糖 (Glucose [Mass/volume] in Blood)
+        entries.push({
+            fullUrl: "urn:uuid:" + generateUUID(), request: { method: "POST", url: "Observation" },
+            resource: { ...baseObservation,
+                category: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/observation-category", code: "vital-signs" }] }],
+                code: { coding: [{ system: "http://loinc.org", code: "2339-0", display: "Glucose [Mass/volume] in Blood" }] },
+                valueQuantity: { value: bloodsugar, unit: "mg/dL", system: "http://unitsofmeasure.org", code: "mg/dL" }
+            }
+        });
+
+        // 診斷病史 (Hypertension)
         if (hasHypertension) {
             entries.push({
                 fullUrl: "urn:uuid:" + generateUUID(), request: { method: "POST", url: "Condition" },
@@ -426,6 +456,7 @@
             });
         }
 
+        // 用藥紀錄
         if (takingMedication) {
             entries.push({
                 fullUrl: "urn:uuid:" + generateUUID(), request: { method: "POST", url: "MedicationStatement" },
